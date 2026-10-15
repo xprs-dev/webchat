@@ -14,12 +14,12 @@ and airs it, and never sees a private key.
 
 ## Layout
 
-- `page/` the source: `chat_page.html`, `xprs_crypto.js`, `logo-font.css`.
+- `page/` the source: `chat_page.html`, `xprs_crypto.js`, `xprs_seal.js`, `logo-font.css`.
 - `tool/build.py` merges them into one HTML file, gzipped, and optionally the C
   array the firmware embeds. `tool/test_crypto.sh` checks the signing against
   the XPRS.md 9.1.2 worked example.
 - `contract/mock_station.py` a station that answers just what the page asks.
-- `test/smoke.py` loads the built page in headless Chromium against it.
+- `test/` `smoke.py` loads the built page in headless Chromium against the mock, `dm_smoke.py` drives a sealed direct message through it, `seal_test.js` checks the sealing.
 
 ## One page, many stations
 
@@ -27,21 +27,39 @@ The page asks `/api/services` and adapts. A station that lists `page` there
 says which panels it fills and whether it offers the app:
 
 ```json
-{ "ok": true, "page": { "tabs": ["chat", "traffic"], "config": false, "app": "/app" } }
+{ "ok": true, "page": { "tabs": ["chat", "traffic"], "config": false, "app": "/app", "session": true } }
 ```
 
 `tabs` are the panels the station can serve (`chat`, `traffic`, `devices`,
 `stats`, `station`, `settings`); the others are hidden. `config: false` hides
 the board's `/config` link. `app` is the path of a page where the app can be
-downloaded, and shows a "Get the app" link. A station with no `page` (the
+downloaded, and shows a "Get the app" link. `session: true` says the station
+gives a visitor who proves their key their own direct messages (below). A station with no `page` (the
 boards, today) shows everything and no link, exactly as before.
+
+## Direct messages
+
+A direct message is sealed to the peer's key (XPRS.md 6.2, AES-256-CBC under the
+ECDH secret) when the page can find a key the station VERIFIED for that
+callsign (`/api/xprs/history?kind=identity&call=`), and sent in the clear, with
+a note, when it cannot. `page/xprs_seal.js` does it in plain JS because a page
+on plain HTTP has no WebCrypto; `test/seal_test.js` checks it against the
+FIPS-197 vector and against an `x:` made by the Dart implementation.
+
+Mail addressed to a visitor is shown only to a visitor who proved the key
+behind their callsign: `GET /api/session` gives a one-time nonce, the page signs
+`t:session f:<call> ts:<stamp> m:<nonce>`, `POST /api/session` returns a session
+that `/api/xprs/history?session=` then honours. Anyone can write any callsign;
+only the key signs.
 
 ## Working on it
 
 ```sh
 python3 tool/build.py        # dist/chat_page.html and .gz
 sh tool/test_crypto.sh       # the signing, against the spec
-python3 test/smoke.py        # the page, in a browser
+python3 test/smoke.py        # the page, in a browser, against two kinds of station
+node test/seal_test.js       # sealing, against known answers
+/usr/bin/python3 test/dm_smoke.py   # a sealed DM both ways (needs python websockets)
 ```
 
 Edit here, never in a generated copy. The firmware and the app each check their

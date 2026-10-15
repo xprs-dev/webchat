@@ -24,7 +24,11 @@ ROWS = [{
     'wire': 't:message f:X1ARKL ts:2026-10-15_09:00:00 scope:local m:hello from the mock',
 }]
 SERVICES = {'ok': True, 'features': {}, 'serve': [],
-            'page': {'tabs': ['chat', 'traffic'], 'config': False, 'app': '/app'}}
+            'page': {'tabs': ['chat', 'traffic'], 'config': False, 'app': '/app',
+                     'session': True}}
+SESSIONS = {}      # token -> callsign
+NONCE = 'c0ffee0123456789'
+ADDRESSED = []     # rows only a session may read (to be set by /__inject)
 if os.environ.get('MOCK_BOARD'):
     # What the boards answer today: no `page`, so the page shows everything.
     del SERVICES['page']
@@ -56,10 +60,18 @@ class H(BaseHTTPRequestHandler):
             self._send(200, b'<html><body>download page</body></html>', 'text/html')
         elif u.path == '/api/services':
             self._send(200, SERVICES)
+        elif u.path == '/api/session':
+            self._send(200, {'ok': True, 'nonce': NONCE})
         elif u.path == '/api/xprs/history':
             q = parse_qs(u.query)
             kinds = (q.get('kind') or [''])[0].split(',')
-            rows = [r for r in ROWS if not kinds[0] or r['type'] in kinds]
+            pool = list(ROWS)
+            if (q.get('session') or [''])[0] in SESSIONS:
+                pool += ADDRESSED
+            rows = [r for r in pool if not kinds[0] or r['type'] in kinds]
+            call = (q.get('call') or [''])[0]
+            if call:
+                rows = [r for r in rows if r['from'] == call]
             self._send(200, {'ok': True, 'count': len(rows), 'held': len(ROWS),
                              'time': 'synced', 'rows': rows})
         elif u.path == '/__sent':
@@ -70,6 +82,30 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(n).decode()
+        path = urlparse(self.path).path
+        if path == '/api/session':
+            # The mock does not check the signature: the real host does
+            # (WebChatApi, tested in the app). It checks the nonce.
+            try:
+                wire = json.loads(body)['wire']
+            except Exception:
+                return self._send(400, {'ok': False, 'error': 'malformed'})
+            if ' m:' + NONCE not in wire:
+                return self._send(403, {'ok': False, 'error': 'no such challenge'})
+            token = 'tok%d' % (len(SESSIONS) + 1)
+            SESSIONS[token] = wire.split(' f:')[1].split(' ')[0]
+            return self._send(200, {'ok': True, 'session': token})
+        if path == '/__inject':
+            # A row only a session may read: {"wire":..., "from":..., "to":...}
+            r = json.loads(body)
+            ADDRESSED.append({'ts': int(time.time()), 'bearer': 'lan', 'rssi': 0,
+                              'from': r['from'], 'to': r.get('to', ''),
+                              'type': r.get('type', 'message'), 'sig': 'verified',
+                              'own': False, 'wire': r['wire']})
+            return self._send(200, {'ok': True})
+        if path == '/__row':
+            ROWS.append(json.loads(body))
+            return self._send(200, {'ok': True})
         if urlparse(self.path).path == '/api/xprs/send':
             try:
                 wire = json.loads(body)['wire']

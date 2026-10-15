@@ -237,6 +237,7 @@ img.shot{max-width:100%;image-rendering:pixelated;border:1px solid var(--border)
 <script>
 "use strict";
 /*CRYPTO*/
+/*SEAL*/
 
 // ---- storage: localStorage -> cookie -> memory (captive WebViews) ----
 var mem={};
@@ -264,6 +265,9 @@ function useKey(bytes){
   priv=bytes;
   npub=npubEncode(pubkeyX(priv));
   mycall=callsignFromNpub(npub);
+  /* A new key is a new callsign: the old session proves nothing for it. */
+  sess='';identSent=0;
+  if(canSession)setTimeout(function(){ensureSession(0);},0);
   stSet('xprs_nsec',nsecEncode(priv));
   document.getElementById('call').textContent=mycall;
 }
@@ -301,6 +305,64 @@ function signWire(canonical){
   var i=canonical.indexOf(' m:');
   if(i>=0)return canonical.slice(0,i)+sig+canonical.slice(i);
   return canonical+sig;}
+
+// ---- who we may talk to privately ----------------------------------------
+//
+// A direct message is sealed to the peer's key (XPRS.md 6.2) when the station
+// has one for them, and sent in the clear, and marked so, when it has not.
+// A key is believed only from an identity the station VERIFIED: anyone can
+// write an identity for somebody else's callsign.
+var keys={};                 /* base callsign -> x-only public key, or false */
+var keyWait={};              /* base callsign -> callbacks waiting for it */
+function npubDecode(str){var d=bech32Decode(str);
+  if(!d||d.hrp!=='npub')return null;var b=to8(d.data);
+  return b.length===32?b:null;}
+function fetchKey(call,cb){
+  var c=baseCall(call);
+  if(keys[c]!==undefined){cb(keys[c]||null);return;}
+  if(keyWait[c]){keyWait[c].push(cb);return;}
+  keyWait[c]=[cb];
+  getJSON('/api/xprs/history?kind=identity&call='+encodeURIComponent(c)+'&limit=3',
+    function(d){
+      var k=null,rows=(d&&d.rows)||[],i,m;
+      for(i=0;i<rows.length&&!k;i++){
+        if(rows[i].sig!=='verified')continue;
+        m=(rows[i].wire||'').match(/ k:(npub1[0-9a-z]+)/);
+        if(m)k=npubDecode(m[1]);
+      }
+      /* Not found is not cached for good: the identity may arrive next. */
+      if(k)keys[c]=k;
+      var w=keyWait[c];delete keyWait[c];
+      for(i=0;i<w.length;i++)w[i](k);
+    });
+}
+
+// ---- a session: proof of the key behind our callsign -----------------------
+//
+// A station that offers mail to visitors (page.session in /api/services) gives
+// a one-time nonce; we sign it, and it then shows us the direct messages
+// addressed to this callsign and no one else's. Anyone can write any callsign;
+// only the key signs.
+var sess='',canSession=false;
+function ensureSession(tries){
+  if(!canSession||sess||!priv)return;
+  sendIdentity();
+  getJSON('/api/session',function(d){
+    if(!d||!d.nonce)return;
+    var w=signWire('t:session f:'+mycall+' ts:'+tsNow()+' m:'+d.nonce);
+    var x=new XMLHttpRequest();
+    x.open('POST','/api/session',true);
+    x.timeout=6000;
+    x.onload=function(){
+      var j=null;try{j=JSON.parse(x.responseText);}catch(e){}
+      if(x.status===200&&j&&j.session){sess=j.session;chatLoaded=false;load();}
+      else if(x.status===409&&(tries||0)<4)
+        /* The station has not heard our identity yet. */
+        setTimeout(function(){ensureSession((tries||0)+1);},1500);
+    };
+    x.send(JSON.stringify({wire:w}));
+  });
+}
 
 // ---- sending: POST -> GET -> Image() (hostile WebViews) ----
 function postWire(wire,cb){
@@ -357,15 +419,27 @@ function sendMsg(){
   /* The Social feed publishes a status (27): kept and read later, not a
    * conversation. A reply to a status is itself a status carrying r:. */
   var typ=curRoom==='social'?'t:status':'t:message';
-  var wire=signWire(typ+' f:'+mycall+' ts:'+tsNow()+where+thread+' m:'+text);
-  if(wire.length>250){snack('Message too long');return;}
+  var peer=curRoom.slice(0,3)==='dm:'?curRoom.slice(3):'';
   t.value='';
   cancelReply();
+  /* A direct message is sealed to the peer's key when we can find it. */
+  if(peer)fetchKey(peer,function(k){dispatch(k);});else dispatch(null);
+  function dispatch(k){
+    var sealedBody=k?sealBody(priv,k,text):null;
+    var wire=sealedBody
+      ?signWire(typ+' f:'+mycall+' ts:'+tsNow()+where+thread+' x:'+sealedBody)
+      :signWire(typ+' f:'+mycall+' ts:'+tsNow()+where+thread+' m:'+text);
+    if(wire.length>250){snack('Message too long');t.value=text;return;}
+    if(peer&&!sealedBody)snack('Sent in the clear: no key found for '+peer);
+    sendOut(wire,text,!!sealedBody,peer);
+  }
+}
+function sendOut(wire,text,sealed,peer){
   /* On the screen immediately -- the archive round trip (index writer +
    * the next poll) takes seconds, and a sender should not wait on it.
    * The wire is archived verbatim, so marking it seen dedups the echo. */
   var mine=render({from:mycall,ts:Math.floor(Date.now()/1000),sig:'verified',
-          to:curRoom.slice(0,3)==='dm:'?curRoom.slice(3):'',wire:wire});
+          to:peer||'',wire:wire,plain:text,sealed:sealed});
   postWire(wire,function(ok,why){
     if(ok)return;
     /* Said on the bubble, where it stays, and not only in a snackbar that
@@ -568,6 +642,13 @@ function switchRoom(r){
     r==='social'?'Status update (published to everyone)':
     'Message to '+r.slice(3);
 }
+/* Draw the room again from what was heard (a key arrived, so what was held
+ * back can now be opened). */
+function rerender(){
+  seen={};
+  document.getElementById('msgs').innerHTML='';
+  for(var i=0;i<allRows.length;i++)render(allRows[i]);
+}
 function openDm(call){
   var p=baseCall(call);
   if(p===baseCall(mycall))return;
@@ -589,9 +670,28 @@ function render(row){
   /* One bubble per message (XPRS.md 5): copies that came round by other
    * relays differ only in via:, which the identifier leaves out. */
   var sk=wireId(w);
-  if(seen[sk])return;seen[sk]=1;
+  if(seen[sk])return;
   var mi=w.indexOf(' m:');
   var text=mi>=0?w.slice(mi+3):'';
+  var sealed=false;
+  if(row.plain!=null){text=row.plain;sealed=!!row.sealed;}
+  else if(mi<0){
+    /* x: is a body sealed to one key (6.2): open it with the peer's. */
+    var xm=w.match(/ x:(\S+)/);
+    if(xm&&priv){
+      var other=baseCall(row.from===mycall?(row.to||''):row.from);
+      var k=keys[other];
+      if(!k){
+        if(other&&keys[other]===undefined)fetchKey(other,function(kk){
+          if(kk)rerender();else keys[other]=false;});
+        return;               /* drawn again when the key arrives */
+      }
+      text=openBody(priv,k,xm[1]);
+      if(text===null)text='(a sealed message that could not be opened)';
+      sealed=true;
+    }
+  }
+  seen[sk]=1;
   if(!text)return;
   if(clearedBefore&&(row.ts||0)<clearedBefore)return;   /* user hit Clear */
   var own=row.from===mycall;
@@ -606,6 +706,7 @@ function render(row){
   var when=row.ts?new Date(row.ts*1000).toLocaleTimeString():'';
   var badge=row.sig==='verified'?'<span class="badge ok">signed</span>'
            :(row.sig==='none'?'<span class="badge bad">unsigned</span>':'');
+  if(sealed)badge+='<span class="badge ok">sealed</span>';
   /* mood: (27.1) is decoration: one italic word beside the post. */
   var mm=w.match(/ mood:([a-z]+) /);
   if(mm)badge+='<span class="mood">'+mm[1]+'</span>';
@@ -672,7 +773,7 @@ function load(){
     // The whole conversation once, then only the newest: this runs every three
     // seconds, and every read holds the archive against its writer.
     x.open('GET','/api/xprs/history?kind=message,reaction,status&limit='+
-           (chatLoaded?40:200),true);
+           (chatLoaded?40:200)+(sess?'&session='+sess:''),true);
     x.timeout=4000;
     x.onload=function(){
       try{
@@ -1025,6 +1126,7 @@ function wifiJoin(){
 function applyServices(sv){
   var p=sv&&sv.page;
   if(!p)return;
+  if(p.session){canSession=true;ensureSession(0);}
   var tabs=p.tabs||['chat'];
   var bs=document.querySelectorAll('[data-tab],[data-view]'),i,n;
   for(i=0;i<bs.length;i++){
