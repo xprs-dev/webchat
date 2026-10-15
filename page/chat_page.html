@@ -194,6 +194,7 @@ img.shot{max-width:100%;image-rendering:pixelated;border:1px solid var(--border)
       <button data-view="station" onclick="openView('station')">Station</button>
       <button data-view="settings" onclick="openView('settings')">Settings</button>
       <button onclick="clearChat()">Clear chat view</button>
+      <button id="extbtn" style="display:none" onclick="toggleExtension()">Use my NOSTR extension</button>
       <button onclick="showNpub()">Show my npub</button>
       <button onclick="exportNsec()">Export nsec</button>
       <button onclick="importNsec()">Import another nsec</button>
@@ -238,6 +239,7 @@ img.shot{max-width:100%;image-rendering:pixelated;border:1px solid var(--border)
 "use strict";
 /*CRYPTO*/
 /*SEAL*/
+/*NOSTR*/
 
 // ---- storage: localStorage -> cookie -> memory (captive WebViews) ----
 var mem={};
@@ -262,7 +264,7 @@ function toggleMenu(){
 // ---- identity: made silently on first visit; the menu changes it ----
 var priv=null,npub='',mycall='';
 function useKey(bytes){
-  priv=bytes;
+  priv=bytes;extMode=false;extPub='';
   npub=npubEncode(pubkeyX(priv));
   mycall=callsignFromNpub(npub);
   /* A new key is a new callsign: the old session proves nothing for it. */
@@ -278,6 +280,7 @@ function randKey(){
   return (b2n(b)===0n||b2n(b)>=N)?randKey():b;}
 function showNpub(){toggleMenu();prompt('Your public key (share freely):',npub);}
 function exportNsec(){toggleMenu();
+  if(extMode){snack('Your key is in your extension');return;}
   prompt('Your SECRET key. Anyone holding it IS '+mycall+':',nsecEncode(priv));}
 function importNsec(){toggleMenu();
   var v=prompt('Paste an nsec to become that identity:');
@@ -305,6 +308,60 @@ function signWire(canonical){
   var i=canonical.indexOf(' m:');
   if(i>=0)return canonical.slice(0,i)+sig+canonical.slice(i);
   return canonical+sig;}
+
+// ---- the account in a NOSTR extension ---------------------------------------
+//
+// With an extension (NIP-07) the account is the same on every station: the
+// callsign comes from its public key, packets are signed by it in the second
+// form of XPRS.md 6.1.3 (the extension may ask each time), and direct messages
+// are sealed and opened by its nip04. Its key never reaches this page.
+var extMode=false,extPub='';
+function canSign(){return extMode||!!priv;}
+/* Sign [canonical] with whatever holds the key: cb(wire) or cb(null,why). */
+function signAny(canonical,cb){
+  if(extMode)nostrSignWire(canonical,extPub,cb);
+  else cb(signWire(canonical));
+}
+function showExtButton(){
+  var b=el('extbtn');
+  if(!b)return;
+  b.style.display=(nostrAvailable()||extMode)?'':'none';
+  b.textContent=extMode?'Use the key in this page':'Use my NOSTR extension';
+}
+function toggleExtension(){
+  toggleMenu();
+  if(extMode){
+    extMode=false;extPub='';stSet('xprs_ext','');
+    var saved=stGet('xprs_nsec'),b=saved?nsecDecode(saved):null;
+    useKey(b||randKey());showExtButton();rerenderAll();
+    snack('Now chatting as '+mycall);
+    return;
+  }
+  useExtension(false);
+}
+function useExtension(quiet){
+  if(!nostrAvailable()){if(!quiet)snack('No NOSTR extension found');return;}
+  var fin=function(h){
+    var pub=typeof h==='string'&&h.length===64?unhexBytes(h):null;
+    if(!pub){if(!quiet)snack('The extension gave no usable key');return;}
+    extMode=true;extPub=h;priv=null;
+    npub=npubEncode(pub);mycall=callsignFromNpub(npub);
+    stSet('xprs_ext','1');
+    sess='';identSent=0;
+    el('call').textContent=mycall;
+    showExtButton();rerenderAll();
+    if(canSession)ensureSession(0);
+    if(!quiet)snack('Now chatting as '+mycall+' through your extension');
+  };
+  try{
+    var r=window.nostr.getPublicKey();
+    if(r&&r.then)r.then(fin,function(){if(!quiet)snack('The extension refused');});
+    else fin(r);
+  }catch(e){if(!quiet)snack('The extension refused');}
+}
+/* The room again from what was heard, under the key now in use. */
+function rerenderAll(){plainCache={};switchRoom(curRoom);load();}
+var plainCache={};            /* wire id -> opened text, or false */
 
 // ---- who we may talk to privately ----------------------------------------
 //
@@ -345,22 +402,24 @@ function fetchKey(call,cb){
 // only the key signs.
 var sess='',canSession=false;
 function ensureSession(tries){
-  if(!canSession||sess||!priv)return;
+  if(!canSession||sess||!canSign())return;
   sendIdentity();
   getJSON('/api/session',function(d){
     if(!d||!d.nonce)return;
-    var w=signWire('t:session f:'+mycall+' ts:'+tsNow()+' m:'+d.nonce);
-    var x=new XMLHttpRequest();
-    x.open('POST','/api/session',true);
-    x.timeout=6000;
-    x.onload=function(){
-      var j=null;try{j=JSON.parse(x.responseText);}catch(e){}
-      if(x.status===200&&j&&j.session){sess=j.session;chatLoaded=false;load();}
-      else if(x.status===409&&(tries||0)<4)
-        /* The station has not heard our identity yet. */
-        setTimeout(function(){ensureSession((tries||0)+1);},1500);
-    };
-    x.send(JSON.stringify({wire:w}));
+    signAny('t:session f:'+mycall+' ts:'+tsNow()+' m:'+d.nonce,function(w){
+      if(!w)return;
+      var x=new XMLHttpRequest();
+      x.open('POST','/api/session',true);
+      x.timeout=6000;
+      x.onload=function(){
+        var j=null;try{j=JSON.parse(x.responseText);}catch(e){}
+        if(x.status===200&&j&&j.session){sess=j.session;chatLoaded=false;load();}
+        else if(x.status===409&&(tries||0)<4)
+          /* The station has not heard our identity yet. */
+          setTimeout(function(){ensureSession((tries||0)+1);},1500);
+      };
+      x.send(JSON.stringify({wire:w}));
+    });
   });
 }
 
@@ -399,12 +458,13 @@ function sendIdentity(){
   var now=Date.now();
   if(now-identSent<86400000)return;
   identSent=now;
-  postWire(signWire('t:identity f:'+mycall+' ts:'+tsNow()+' k:'+npub),null);
+  signAny('t:identity f:'+mycall+' ts:'+tsNow()+' k:'+npub,function(w){
+    if(w)postWire(w,null);});
 }
 function sendMsg(){
   var t=document.getElementById('txt');
   var text=t.value.trim();
-  if(!text||!priv)return;
+  if(!text||!canSign())return;
   text=text.replace(/[\x00-\x1f]/g,' ');
   sendIdentity();
   var thread='';
@@ -425,13 +485,18 @@ function sendMsg(){
   /* A direct message is sealed to the peer's key when we can find it. */
   if(peer)fetchKey(peer,function(k){dispatch(k);});else dispatch(null);
   function dispatch(k){
-    var sealedBody=k?sealBody(priv,k,text):null;
-    var wire=sealedBody
-      ?signWire(typ+' f:'+mycall+' ts:'+tsNow()+where+thread+' x:'+sealedBody)
-      :signWire(typ+' f:'+mycall+' ts:'+tsNow()+where+thread+' m:'+text);
-    if(wire.length>250){snack('Message too long');t.value=text;return;}
-    if(peer&&!sealedBody)snack('Sent in the clear: no key found for '+peer);
-    sendOut(wire,text,!!sealedBody,peer);
+    if(!k){finish(null);return;}
+    if(extMode)nostrSeal(hex(k),text,finish);
+    else finish(sealBody(priv,k,text));
+  }
+  function finish(sealedBody){
+    var head=typ+' f:'+mycall+' ts:'+tsNow()+where+thread;
+    signAny(sealedBody?head+' x:'+sealedBody:head+' m:'+text,function(wire,why){
+      if(!wire){snack('Not sent: '+(why||'not signed'));t.value=text;return;}
+      if(u8(wire).length>250){snack('Message too long');t.value=text;return;}
+      if(peer&&!sealedBody)snack('Sent in the clear: no way to seal to '+peer);
+      sendOut(wire,text,!!sealedBody,peer);
+    });
   }
 }
 function sendOut(wire,text,sealed,peer){
@@ -546,8 +611,8 @@ function sendLike(id){
   refreshLikes(id);
   var par=idmap[id];
   var sc=par&&par.scope&&par.scope!=='global'?' scope:'+par.scope:'';
-  var wire=signWire('t:reaction f:'+mycall+' ts:'+tsNow()+sc+' '+verb+':like r:'+id);
-  postWire(wire,null);}
+  signAny('t:reaction f:'+mycall+' ts:'+tsNow()+sc+' '+verb+':like r:'+id,function(wire){
+    if(wire)postWire(wire,null);});}
 
 /* ---- the per-message menu ---- */
 function showMsgMenu(ev,id,from,own){
@@ -678,7 +743,7 @@ function render(row){
   else if(mi<0){
     /* x: is a body sealed to one key (6.2): open it with the peer's. */
     var xm=w.match(/ x:(\S+)/);
-    if(xm&&priv){
+    if(xm&&canSign()){
       var other=baseCall(row.from===mycall?(row.to||''):row.from);
       var k=keys[other];
       if(!k){
@@ -686,7 +751,17 @@ function render(row){
           if(kk)rerender();else keys[other]=false;});
         return;               /* drawn again when the key arrives */
       }
-      text=openBody(priv,k,xm[1]);
+      if(extMode){
+        /* The extension opens it, asynchronously: drawn when it has. */
+        var pc=plainCache[sk];
+        if(pc===undefined){
+          plainCache[sk]=null;
+          nostrOpen(hex(k),xm[1],function(t2){plainCache[sk]=t2===null?false:t2;rerender();});
+          return;
+        }
+        if(pc===null)return;
+        text=pc===false?null:pc;
+      }else text=openBody(priv,k,xm[1]);
       if(text===null)text='(a sealed message that could not be opened)';
       sealed=true;
     }
@@ -1147,5 +1222,11 @@ function applyServices(sv){
   load();
   tabTimer=setInterval(tick,TAB_MS.chat);
   getJSON('/api/services',applyServices);
+  /* An extension injects `window.nostr` a moment after the page starts. */
+  var tries=0,tm=setInterval(function(){
+    showExtButton();
+    if(nostrAvailable()&&stGet('xprs_ext')==='1'&&!extMode){clearInterval(tm);useExtension(true);}
+    else if(++tries>12||(nostrAvailable()&&stGet('xprs_ext')!=='1'))clearInterval(tm);
+  },250);
 })();
 </script></body></html>

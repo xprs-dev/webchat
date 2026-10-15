@@ -4,9 +4,10 @@
     python3 tool/build.py                 # dist/chat_page.html and .html.gz
     python3 tool/build.py --c OUT.c       # also the C array the firmware embeds
 
-page/chat_page.html carries three markers: /*FONTFACE*/ (replaced by
+page/chat_page.html carries four markers: /*FONTFACE*/ (replaced by
 page/logo-font.css), /*CRYPTO*/ (replaced by page/xprs_crypto.js with its node
-test block stripped) and /*SEAL*/ (page/xprs_seal.js, which builds on it). The result is one self-contained HTML file, which
+test block stripped), /*SEAL*/ (page/xprs_seal.js, which builds on it) and
+/*NOSTR*/ (page/xprs_nostr.js, which uses a NOSTR extension as the signer). The result is one self-contained HTML file, which
 the firmware stores gzipped and the app serves gzipped (Content-Encoding:
 gzip); mtime is 0 so an unchanged page builds to identical bytes.
 """
@@ -31,6 +32,7 @@ def build():
     html = html.replace('/*FONTFACE*/', read('page/logo-font.css').rstrip('\n'))
     html = html.replace('/*CRYPTO*/', js)
     html = html.replace('/*SEAL*/', read('page/xprs_seal.js'))
+    html = html.replace('/*NOSTR*/', read('page/xprs_nostr.js'))
     return html.encode('utf-8')
 
 

@@ -14,7 +14,7 @@ and airs it, and never sees a private key.
 
 ## Layout
 
-- `page/` the source: `chat_page.html`, `xprs_crypto.js`, `xprs_seal.js`, `logo-font.css`.
+- `page/` the source: `chat_page.html`, `xprs_crypto.js`, `xprs_seal.js`, `xprs_nostr.js`, `logo-font.css`.
 - `tool/build.py` merges them into one HTML file, gzipped, and optionally the C
   array the firmware embeds. `tool/test_crypto.sh` checks the signing against
   the XPRS.md 9.1.2 worked example.
@@ -52,6 +52,29 @@ behind their callsign: `GET /api/session` gives a one-time nonce, the page signs
 that `/api/xprs/history?session=` then honours. Anyone can write any callsign;
 only the key signs.
 
+## A NOSTR extension
+
+With a NIP-07 extension (`window.nostr`: nos2x, Alby and the like) the menu offers
+"Use my NOSTR extension", and the account is the same on every station: the
+callsign comes from the extension's public key, whatever the station. The key
+never reaches the page.
+
+- **Signing.** The extension signs only NOSTR events, so a packet is signed in the
+  second form of XPRS.md 6.1.3: the page asks it to sign a kind 24767 event whose
+  content is the packet digest, and the 64-byte BIP-340 signature goes in `sig:`
+  as 80 characters (the short 60-character form stays the default for a key the
+  page holds). The extension may ask each time; most let the user allow the kind.
+- **Sealing.** `nip04.encrypt` and `decrypt` are the `x:` cipher in another
+  wrapping (6.2); `page/xprs_nostr.js` converts, and refuses a signer that
+  changed the time or content it was asked to sign.
+- **Remembered.** The choice is kept per origin; the page reconnects to the
+  extension when it loads (the extension may ask again).
+
+`test/nostr_test.js` reproduces the specification's worked packet byte for byte
+through a stand-in extension; `test/ext_smoke.py` drives it in a browser and has
+a separate pure-Python BIP-340 verifier (`test/bip340_ref.py`) check what the page
+signed.
+
 ## Working on it
 
 ```sh
@@ -59,6 +82,8 @@ python3 tool/build.py        # dist/chat_page.html and .gz
 sh tool/test_crypto.sh       # the signing, against the spec
 python3 test/smoke.py        # the page, in a browser, against two kinds of station
 node test/seal_test.js       # sealing, against known answers
+node test/nostr_test.js      # the extension path, against the spec's worked packet
+/usr/bin/python3 test/ext_smoke.py  # the extension in a browser, signature checked independently
 /usr/bin/python3 test/dm_smoke.py   # a sealed DM both ways (needs python websockets)
 ```
 

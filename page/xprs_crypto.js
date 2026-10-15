@@ -86,8 +86,15 @@ function mulG(k){return jaff(jmul(mod(k,N),GX,GY));}
 function tagged(tag,msg){var th=sha256(s2b(tag));return sha256(cat(th,th,msg));}
 
 // ---- XPRS short-Schnorr (9.1.2) ----
+/* The packet's bytes are UTF-8 (section 4), not the low byte of each UTF-16
+ * unit: s2b is for the ASCII it was written for (tags, hex), and signing "e
+ * with an accent" through it hashed different bytes than every verifier does. */
+function u8(s){
+  if(typeof TextEncoder!=='undefined')return new TextEncoder().encode(s);
+  var u=unescape(encodeURIComponent(s)),b=new Uint8Array(u.length);
+  for(var i=0;i<u.length;i++)b[i]=u.charCodeAt(i);return b;}
 function xprsSign(canonicalStr,dPriv,aux){
-  var digest=sha256(s2b(canonicalStr));
+  var digest=sha256(u8(canonicalStr));
   var d=mod(dPriv,N); if(d===0n) throw 'bad key';
   var Pt=mulG(d);
   if(Pt[1]&1n){d=N-d;Pt=mulG(d);}
