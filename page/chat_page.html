@@ -369,14 +369,15 @@ var plainCache={};            /* wire id -> opened text, or false */
 // has one for them, and sent in the clear, and marked so, when it has not.
 // A key is believed only from an identity the station VERIFIED: anyone can
 // write an identity for somebody else's callsign.
-var keys={};                 /* base callsign -> x-only public key, or false */
+var keys={};                 /* base callsign -> x-only public key, found ones only */
+var keyMiss={};              /* base callsign -> when a lookup last found nothing */
 var keyWait={};              /* base callsign -> callbacks waiting for it */
 function npubDecode(str){var d=bech32Decode(str);
   if(!d||d.hrp!=='npub')return null;var b=to8(d.data);
   return b.length===32?b:null;}
 function fetchKey(call,cb){
   var c=baseCall(call);
-  if(keys[c]!==undefined){cb(keys[c]||null);return;}
+  if(keys[c]){cb(keys[c]);return;}
   if(keyWait[c]){keyWait[c].push(cb);return;}
   keyWait[c]=[cb];
   getJSON('/api/xprs/history?kind=identity&call='+encodeURIComponent(c)+'&limit=3',
@@ -387,8 +388,8 @@ function fetchKey(call,cb){
         m=(rows[i].wire||'').match(/ k:(npub1[0-9a-z]+)/);
         if(m)k=npubDecode(m[1]);
       }
-      /* Not found is not cached for good: the identity may arrive next. */
-      if(k)keys[c]=k;
+      /* Not found is not remembered as a fact: the identity may arrive next. */
+      if(k)keys[c]=k;else keyMiss[c]=Date.now();
       var w=keyWait[c];delete keyWait[c];
       for(i=0;i<w.length;i++)w[i](k);
     });
@@ -747,8 +748,9 @@ function render(row){
       var other=baseCall(row.from===mycall?(row.to||''):row.from);
       var k=keys[other];
       if(!k){
-        if(other&&keys[other]===undefined)fetchKey(other,function(kk){
-          if(kk)rerender();else keys[other]=false;});
+        /* Ask again only after a while if the last lookup found nothing. */
+        if(other&&!(keyMiss[other]&&Date.now()-keyMiss[other]<10000))
+          fetchKey(other,function(kk){if(kk)rerender();});
         return;               /* drawn again when the key arrives */
       }
       if(extMode){

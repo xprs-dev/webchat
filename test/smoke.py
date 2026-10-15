@@ -9,6 +9,7 @@ page shows everything it always did and no app link). Chromium is the snap
 one, which can write only under ~/snap/chromium/common.
 """
 import os
+import shutil
 import re
 import subprocess
 import sys
@@ -19,6 +20,7 @@ PROF = os.path.expanduser('~/snap/chromium/common/webchat-prof')
 
 
 def dom(port):
+    shutil.rmtree(PROF, ignore_errors=True)   # the page keeps its room and key in localStorage
     os.makedirs(PROF, exist_ok=True)
     return subprocess.run(
         ['chromium', '--headless=new', '--no-sandbox', '--disable-gpu',

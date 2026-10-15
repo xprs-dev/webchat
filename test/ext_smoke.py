@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -69,6 +70,7 @@ def check(ok, what):
 
 async def main():
     mock = subprocess.Popen([sys.executable, os.path.join(ROOT, 'contract', 'mock_station.py'), str(PORT)])
+    shutil.rmtree(PROF, ignore_errors=True)   # the page keeps its room and key in localStorage
     os.makedirs(PROF, exist_ok=True)
     chrome = subprocess.Popen(['chromium', '--headless=new', '--no-sandbox', '--disable-gpu',
                                '--user-data-dir=' + PROF, '--remote-debugging-port=%d' % CDP, 'about:blank'],
