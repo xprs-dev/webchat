@@ -37,6 +37,20 @@ downloaded, and shows a "Get the app" link. `session: true` says the station
 gives a visitor who proves their key their own direct messages (below). A station with no `page` (the
 boards, today) shows everything and no link, exactly as before.
 
+## The rooms' archive, and Traffic
+
+The page asks each room's archive once, a room at a time
+(`/api/xprs/history?kind=message&room=local`, then regional, global and the
+Social feed), and after that only the newest rows every three seconds. Asking
+the newest 200 of everything gave one room: a bridged Meshtastic channel filled
+all 200 and Local and Global looked empty. A station that does not know `room=`
+answers its newest messages, which the page files as before.
+
+Traffic shows one entry per packet. The archive keeps a copy per bearer a packet
+went out or came in on, so the copies (the same XPRS.md 5 identifier) merge into
+one entry with a tag per direction and bearer: `↑lan ↑espnow ↓ble -61`.
+`test/traffic_test.js` checks the merge.
+
 ## Direct messages
 
 A direct message is sealed to the peer's key (XPRS.md 6.2, AES-256-CBC under the
@@ -80,8 +94,10 @@ signed.
 ```sh
 python3 tool/build.py        # dist/chat_page.html and .gz
 sh tool/test_crypto.sh       # the signing, against the spec
-python3 test/smoke.py        # the page, in a browser, against two kinds of station
+python3 test/smoke.py        # the page, in a browser, against three kinds of station
+                             # (WEBCHAT_BROWSER=google-chrome if the snap Chromium dumps nothing)
 node test/seal_test.js       # sealing, against known answers
+node test/traffic_test.js    # the Traffic merge
 node test/nostr_test.js      # the extension path, against the spec's worked packet
 /usr/bin/python3 test/ext_smoke.py  # the extension in a browser, signature checked independently
 /usr/bin/python3 test/dm_smoke.py   # a sealed DM both ways (needs python websockets)

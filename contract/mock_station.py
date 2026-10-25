@@ -29,6 +29,28 @@ SERVICES = {'ok': True, 'features': {}, 'serve': [],
 SESSIONS = {}      # token -> callsign
 NONCE = 'c0ffee0123456789'
 ADDRESSED = []     # rows only a session may read (to be set by /__inject)
+if os.environ.get('MOCK_FLOOD'):
+    # A busy bridged channel: 200 regional messages newer than the local one,
+    # so the newest page of everything holds no Local conversation at all.
+    for i in range(200):
+        ROWS.append({'ts': int(time.time()) - 50 + i // 10, 'bearer': 'lora',
+                     'rssi': -90, 'from': 'MT%06X' % i, 'to': '', 'type': 'message',
+                     'sig': 'none', 'own': False,
+                     'wire': 't:message f:MT%06X ts:2026-10-15_09:01:%02d '
+                             'scope:regional m:flood %d' % (i, i % 60, i)})
+
+
+def room_of(r):
+    """The room= filter: an undirected row, by the scope its author wrote."""
+    if r['to'] and not r['to'].startswith('#'):
+        return None
+    head = r['wire'].split(' m:')[0] + ' '
+    for room in ('local', 'regional'):
+        if ' scope:%s ' % room in head:
+            return room
+    return 'global'
+
+
 if os.environ.get('MOCK_BOARD'):
     # What the boards answer today: no `page`, so the page shows everything.
     del SERVICES['page']
@@ -72,6 +94,11 @@ class H(BaseHTTPRequestHandler):
             call = (q.get('call') or [''])[0]
             if call:
                 rows = [r for r in rows if r['from'] == call]
+            room = (q.get('room') or [''])[0]
+            if room:
+                rows = [r for r in rows if room_of(r) == room]
+            rows.sort(key=lambda r: -r['ts'])
+            rows = rows[:int((q.get('limit') or ['30'])[0])]
             self._send(200, {'ok': True, 'count': len(rows), 'held': len(ROWS),
                              'time': 'synced', 'rows': rows})
         elif u.path == '/__sent':
