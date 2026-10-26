@@ -28,10 +28,13 @@ check(h === '-', 'a neighbour on a link with no signal: ' + h);
 h = api.distCell({call: 'MT1234', dist_m: 19, hops: 1, via: 'X3SEP2', near_m: 12, far_m: 7});
 check(/~19 m<\/span> <span class="dim">via X3SEP2<\/span>$/.test(h) && /12 m to X3SEP2, ~7 m from there/.test(h),
       'relayed and said: the sum, the relay, the legs in the title: ' + h);
-h = api.distCell({call: 'MT1234', dist_m: -1, hops: 1, via: 'X3SEP2', near_m: 12, far_m: -1});
-check(/&gt;~12 m<\/span> <span class="dim">via X3SEP2<\/span>$/.test(h) && /has not said how far MT1234/.test(h),
-      'relayed, unsaid: the first leg as a floor: ' + h);
-h = api.distCell({call: 'MT1234', dist_m: -1, hops: 2, via: 'X1LAP', near_m: -1, far_m: -1});
+h = api.distCell({call: 'MT1234', dist_m: -1, hops: 1, via: 'X3SEP2', near_m: 12, far_m: -1, floor_m: 12});
+check(/&gt;~12 m<\/span> <span class="dim">via X3SEP2<\/span>$/.test(h) && /through X3SEP2 about 12 m away/.test(h),
+      'relayed, unsaid: what was measured as a floor: ' + h);
+h = api.distCell({call: 'MT5678', dist_m: -1, hops: 4, via: '', near_m: 65, far_m: -1, floor_m: 65});
+check(h === '<span title="MT5678 was heard through a repeater about 65 m away; how far it is beyond that nobody has said">&gt;~65 m</span>',
+      'behind an unnamed Meshtastic repeater: the measured distance to it: ' + h);
+h = api.distCell({call: 'MT1234', dist_m: -1, hops: 2, via: 'X1LAP', near_m: -1, far_m: -1, floor_m: -1});
 check(h === '- <span class="dim">via X1LAP</span>', 'relayed over a link with no signal: ' + h);
 h = api.distCell({call: 'X', dist_m: 3, hops: 1, via: '<b>', near_m: 1, far_m: 2});
 check(h.indexOf('<b>') < 0 && h.indexOf('&lt;b&gt;') >= 0, 'the relay name is escaped');
