@@ -51,6 +51,30 @@ went out or came in on, so the copies (the same XPRS.md 5 identifier) merge into
 one entry with a tag per direction and bearer: `↑lan ↑espnow ↓ble -61`.
 `test/traffic_test.js` checks the merge.
 
+## Devices, and a distance through a relay
+
+The Devices tab lists `/api/xprs/devices`. A station a relay carried here
+(`+1 hop`) is as far as the relay plus the relay's own reading of it, which
+the station sums into `dist_m` (firmware `docs/chat.md`); the row then also
+says `via`, `near_m` and `far_m`, and the cell shows the sum with the legs
+in its tooltip. When the relay has not yet said how far the station is from
+it, the first leg is shown as a floor: `>~12 m via X3SEP2`.
+`test/devices_test.js` checks the cell.
+
+## The page in Android's captive-portal browser
+
+Android opens a station's page in CaptivePortalLogin, whose WebView sits in a
+swipe-to-refresh layout: a downward drag while the DOCUMENT is at scroll 0
+reloads the page, whichever inner panel the finger is on. This page scrolls
+only inside its panels, so the document sat at 0 for ever and scrolling up
+through the conversation reloaded it. The body is one pixel taller than the
+window and parked at `scrollY` 1 (`park()`, and the `html`/`body` rule): the
+WebView then reports it can scroll up and the drag stays with the panel. The
+document itself cannot be dragged, and `overscroll-behavior` stops a panel at
+its end, and Chrome's own pull-to-refresh, from chaining to it. Nothing to
+test but on a phone: join the hotspot, open the page from the sign-in
+notification, scroll up.
+
 ## Direct messages
 
 A direct message is sealed to the peer's key (XPRS.md 6.2, AES-256-CBC under the
@@ -98,6 +122,7 @@ python3 test/smoke.py        # the page, in a browser, against three kinds of st
                              # (WEBCHAT_BROWSER=google-chrome if the snap Chromium dumps nothing)
 node test/seal_test.js       # sealing, against known answers
 node test/traffic_test.js    # the Traffic merge
+node test/devices_test.js    # the Devices distance cell
 node test/nostr_test.js      # the extension path, against the spec's worked packet
 /usr/bin/python3 test/ext_smoke.py  # the extension in a browser, signature checked independently
 /usr/bin/python3 test/dm_smoke.py   # a sealed DM both ways (needs python websockets)
