@@ -19,6 +19,16 @@
   it) does not reload the page on a scroll-up inside a panel. Any page of ours
   that scrolls in panels rather than the document, served to a phone over a
   hotspot, needs the same three lines.
+- **`fit()` with the `--sa*`, `--lay-h` and `--cut` properties**: a full-height
+  page that never scrolls has to end where the visitor can see, and on
+  Android that is not `100%`. It asks for safe-area insets
+  (`viewport-fit=cover`), cuts off what a toolbar lying over the page covers
+  (window height minus the visual viewport), and guesses the Android bars for
+  a WebView drawn under them that reports no inset (page as tall as the
+  screen). Goes with `park()`; any phone-sized page of ours wants both.
+- **`Cdp` in `test/layout_smoke.py`**: headless Chrome driven over the
+  DevTools protocol on a pipe (fds 3 and 4), no websocket module. Use it for
+  any browser test that needs device emulation or to run script in the page.
 - **`pick(name)` in `test/traffic_test.js` and `test/devices_test.js`**: lifts
   one function out of the page source by brace matching, so a page function is
   unit-tested in Node without a browser.

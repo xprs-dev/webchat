@@ -19,7 +19,7 @@ and airs it, and never sees a private key.
   array the firmware embeds. `tool/test_crypto.sh` checks the signing against
   the XPRS.md 9.1.2 worked example.
 - `contract/mock_station.py` a station that answers just what the page asks.
-- `test/` `smoke.py` loads the built page in headless Chromium against the mock, `dm_smoke.py` drives a sealed direct message through it, `seal_test.js` checks the sealing.
+- `test/` `smoke.py` loads the built page in headless Chromium against the mock, `dm_smoke.py` drives a sealed direct message through it, `layout_smoke.py` checks the composer stays on screen under Android's bars and toolbars, `seal_test.js` checks the sealing.
 
 ## One page, many stations
 
@@ -120,6 +120,7 @@ python3 tool/build.py        # dist/chat_page.html and .gz
 sh tool/test_crypto.sh       # the signing, against the spec
 python3 test/smoke.py        # the page, in a browser, against three kinds of station
                              # (WEBCHAT_BROWSER=google-chrome if the snap Chromium dumps nothing)
+python3 test/layout_smoke.py # the composer on a phone, under emulated bars (google-chrome)
 node test/seal_test.js       # sealing, against known answers
 node test/traffic_test.js    # the Traffic merge
 node test/devices_test.js    # the Devices distance cell

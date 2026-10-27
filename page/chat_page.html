@@ -9,14 +9,19 @@
      secure context, often no localStorage. -->
 <html><head><meta charset="utf-8">
 <!-- resizes-content: the keyboard shrinks the page instead of scrolling it,
-     so the header and the room chips stay on screen while typing. -->
+     so the header and the room chips stay on screen while typing.
+     viewport-fit=cover: where the browser draws the page under Android's
+     navigation or status bar it then says how much, as safe-area insets
+     (the --sa* properties below); everywhere else they are 0. -->
 <meta name="viewport"
-      content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
+      content="width=device-width,initial-scale=1,interactive-widget=resizes-content,viewport-fit=cover">
 <title>XPRS</title>
 <style>
 /*FONTFACE*/
 :root{--accent:#ffa86a;--bg:#101010;--text:#f0f0f0;
-      --border:rgba(255,240,224,.125);--muted:#888}
+      --border:rgba(255,240,224,.125);--muted:#888;
+      --sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);
+      --sal:env(safe-area-inset-left,0px);--sar:env(safe-area-inset-right,0px)}
 *{box-sizing:border-box;margin:0;padding:0}
 /* The document never scrolls; the panels do. Android's captive-portal
    browser (CaptivePortalLogin) wraps its WebView in a swipe-to-refresh
@@ -28,14 +33,20 @@
    itself cannot be dragged (overflow:hidden), and overscroll-behavior keeps
    a panel at its end, and Chrome's own pull-to-refresh, from reaching it. */
 html{height:100%;overflow:hidden;overscroll-behavior:none}
-body{height:calc(100% + 1px);padding-top:1px;overflow:hidden;
+/* The body is the window's height (fit(), in the script, as --lay-h; 100%
+   until it ran), and stays one pixel taller for the parking. What a
+   toolbar lying over the bottom covers (Samsung Internet, Firefox: it would
+   hide as the page scrolls, but this page never scrolls, so the composer
+   stayed under it for good) is cut off as --cut, padding at the bottom. */
+body{height:calc(100% + 1px);height:calc(var(--lay-h,100%) + 1px);
+     padding:1px var(--sar) var(--cut,0px) var(--sal);overflow:hidden;
      overscroll-behavior:none}
 .messages,.view,#side{overscroll-behavior:contain}
 body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;
      background:var(--bg);color:var(--text);font-size:14px;
      display:flex;flex-direction:column}
 .header{border-bottom:1px solid var(--border);height:40px;
-        padding:0 12px;margin-top:5px;
+        padding:0 12px;margin-top:calc(5px + var(--sat));
         display:flex;align-items:center;gap:12px;position:relative}
 .header .logo{font-family:'Wartext',sans-serif;font-size:38px;
         color:var(--accent);letter-spacing:5px;margin-top:-12px;
@@ -128,7 +139,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;
 .msg.failed .bubble{opacity:.55;border-style:dashed}
 .msg .why{font-size:11px;color:#ef9a9a;margin-top:2px}
 .mood{font-size:10px;font-style:italic;color:var(--accent);margin-left:4px}
-.input-area{border-top:1px solid var(--border);padding:8px;display:flex;
+/* Last row of the page: kept above the navigation bar of a WebView that
+   draws under it (Android 15 forces edge-to-edge on apps, the captive-portal
+   sign-in screen and in-app browsers among them). */
+.input-area{border-top:1px solid var(--border);padding:8px;
+        padding-bottom:calc(8px + var(--sab));display:flex;
         gap:6px;align-items:center}
 .input-area input{flex:1;min-width:0;background:transparent;
         border:1px solid var(--border);border-radius:4px;padding:8px;
@@ -144,7 +159,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;
 #getapp.hide{display:none}
 .snackbar{visibility:hidden;min-width:250px;background:#333;color:#fff;
         text-align:center;border-radius:4px;padding:12px;position:fixed;
-        z-index:10;left:50%;bottom:60px;transform:translateX(-50%);
+        z-index:10;left:50%;bottom:calc(60px + var(--sab));transform:translateX(-50%);
         font-size:14px}
 .snackbar.show{visibility:visible;animation:fadein .3s,fadeout .3s 2.7s}
 /* Tabs. The station shows seven panels on its own screen; the phone on the
@@ -1332,8 +1347,45 @@ function park(){
   var y=window.scrollY!==undefined?window.scrollY:document.documentElement.scrollTop;
   if(y<1)window.scrollTo(0,1);
 }
-window.addEventListener('load',park);
-window.addEventListener('resize',park);
+// The page ends where what is visible ends: the visual viewport, which a
+// toolbar lying over the page shortens (not while pinch-zoomed, when it is
+// the zoomed window). And a WebView that draws under the system bars but
+// reports no safe-area insets (WebViews before edge-to-edge support) is told
+// the Android bars' heights: the tell is a page as tall as the whole screen,
+// which a browser that keeps clear of the bars never is. A measured inset
+// always wins over the guess.
+function fit(){
+  var de=document.documentElement,vv=window.visualViewport;
+  var lay=window.innerHeight;
+  var vis=vv&&Math.abs(vv.scale-1)<0.01?vv.height:lay;
+  if(lay>0){
+    de.style.setProperty('--lay-h',lay+'px');
+    de.style.setProperty('--cut',Math.max(0,Math.round(lay-vis))+'px');
+  }
+  var under=('ontouchstart' in window)&&window.screen&&
+            window.innerHeight>=window.screen.height-2;
+  if(under&&!insetBottom()){
+    de.style.setProperty('--sab','48px');de.style.setProperty('--sat','24px');
+  }else{
+    de.style.removeProperty('--sab');de.style.removeProperty('--sat');
+  }
+  park();
+}
+// The bottom inset the browser reports, in px. A custom property computes
+// to its text ("env(...)"), so it is read off a real padding.
+var insetProbe=null;
+function insetBottom(){
+  if(!insetProbe){
+    insetProbe=document.createElement('div');
+    insetProbe.style.cssText='position:fixed;visibility:hidden;'+
+      'padding-bottom:env(safe-area-inset-bottom,0px)';
+    document.body.appendChild(insetProbe);
+  }
+  return parseFloat(getComputedStyle(insetProbe).paddingBottom)||0;
+}
+window.addEventListener('load',fit);
+window.addEventListener('resize',fit);
+if(window.visualViewport)window.visualViewport.addEventListener('resize',fit);
 window.addEventListener('scroll',park,{passive:true});
-park();
+fit();
 </script></body></html>
